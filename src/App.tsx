@@ -4,7 +4,7 @@ import "./styles.css";
 
 type View = "dashboard" | "allocation" | "transactions" | "etf" | "rebalance" | "plan";
 type TxType = "매수" | "매도" | "배당";
-type Allocation = { id: string; name: string; target: number; color: string };
+type Allocation = { id: string; name: string; target: number; monthlyAmount: number; color: string };
 type Transaction = { id: string; date: string; type: TxType; asset: string; name: string; ticker: string; account: string; price: number; qty: number; currentPrice: number; memo: string };
 type Etf = { id: string; name: string; ticker: string; asset: string; country: string; issuer: string; fee: number; style: string; watch: boolean; memo: string };
 type AppState = {
@@ -24,11 +24,11 @@ const id = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36
 const defaultState: AppState = {
   settings: { monthlyBudget: 200000, targetReturn: 7, startDate: "2026-03-01", threshold: 5, goalName: "졸업 후 종잣돈", goalAmount: 30000000, periodYears: 10 },
   allocations: [
-    { id: "a1", name: "국내 주식", target: 20, color: palette[0] },
-    { id: "a2", name: "해외 주식", target: 40, color: palette[1] },
-    { id: "a3", name: "채권", target: 20, color: palette[2] },
-    { id: "a4", name: "현금성 자산", target: 15, color: palette[3] },
-    { id: "a5", name: "대체 자산", target: 5, color: palette[4] },
+    { id: "a1", name: "국내 주식", target: 20, monthlyAmount: 40000, color: palette[0] },
+    { id: "a2", name: "해외 주식", target: 40, monthlyAmount: 80000, color: palette[1] },
+    { id: "a3", name: "채권", target: 20, monthlyAmount: 40000, color: palette[2] },
+    { id: "a4", name: "현금성 자산", target: 15, monthlyAmount: 30000, color: palette[3] },
+    { id: "a5", name: "대체 자산", target: 5, monthlyAmount: 10000, color: palette[4] },
   ],
   transactions: [
     { id: "t1", date: "2026-05-10", type: "매수", asset: "해외 주식", name: "미국 S&P500 ETF", ticker: "S&P500", account: "ISA", price: 18450, qty: 8, currentPrice: 19280, memo: "정기 매수" },
@@ -46,31 +46,79 @@ const defaultState: AppState = {
 const won = (value: number) => new Intl.NumberFormat("ko-KR", { style: "currency", currency: "KRW", maximumFractionDigits: 0 }).format(Number.isFinite(value) ? value : 0);
 const pct = (value: number, digits = 1) => `${(Number.isFinite(value) ? value : 0).toFixed(digits)}%`;
 const safeNumber = (value: unknown) => { const n = Number(value); return Number.isFinite(n) ? n : 0; };
+const finiteOr = (value: unknown, fallback: number) => { const n = Number(value); return Number.isFinite(n) ? n : fallback; };
+const formatMoneyInput = (value: number) => value ? Math.max(0, Math.round(value)).toLocaleString("ko-KR") : "";
 
 function migrateLegacy(raw: unknown): AppState {
   const old = (raw ?? {}) as Record<string, any>;
   const settings = old.settings ?? {};
-  const allocations = Array.isArray(old.allocs)
-    ? old.allocs.map((a: any, index: number) => ({ id: a.id ?? id(), name: a.name || "자산군", target: safeNumber(a.target), color: palette[index % palette.length] }))
-    : Array.isArray(old.allocations) ? old.allocations : defaultState.allocations;
+  const monthlyBudget = finiteOr(settings.monthlyBudget ?? settings.budget, defaultState.settings.monthlyBudget);
+  const rawAllocations = Array.isArray(old.allocs) ? old.allocs : Array.isArray(old.allocations) ? old.allocations : defaultState.allocations;
+  const allocations = rawAllocations.map((a: any, index: number) => {
+    const target = safeNumber(a.target);
+    const hasSavedAmount = a.monthlyAmount !== undefined || a.amount !== undefined;
+    return {
+      id: a.id ?? id(),
+      name: a.name || "자산군",
+      target,
+      monthlyAmount: hasSavedAmount ? safeNumber(a.monthlyAmount ?? a.amount) : Math.round(monthlyBudget * target / 100),
+      color: a.color || palette[index % palette.length],
+    };
+  });
   const transactions = Array.isArray(old.records)
     ? old.records.map((r: any) => ({ id: r.id ?? id(), date: r.date || today, type: "매수" as TxType, asset: r.asset || allocations[0]?.name || "기타", name: r.name || "", ticker: r.ticker || r.name || "", account: r.account || "일반 증권계좌", price: safeNumber(r.buy), qty: safeNumber(r.qty), currentPrice: safeNumber(r.current), memo: r.memo || "" }))
     : Array.isArray(old.transactions) ? old.transactions : [];
   return {
     settings: {
-      monthlyBudget: safeNumber(settings.monthlyBudget ?? settings.budget) || defaultState.settings.monthlyBudget,
-      targetReturn: safeNumber(settings.targetReturn) || defaultState.settings.targetReturn,
+      monthlyBudget,
+      targetReturn: finiteOr(settings.targetReturn, defaultState.settings.targetReturn),
       startDate: settings.startDate || defaultState.settings.startDate,
-      threshold: safeNumber(settings.threshold) || defaultState.settings.threshold,
+      threshold: finiteOr(settings.threshold, defaultState.settings.threshold),
       goalName: settings.goalName || settings.goal || defaultState.settings.goalName,
-      goalAmount: safeNumber(settings.goalAmount) || defaultState.settings.goalAmount,
-      periodYears: safeNumber(settings.periodYears ?? settings.years) || defaultState.settings.periodYears,
+      goalAmount: finiteOr(settings.goalAmount, defaultState.settings.goalAmount),
+      periodYears: finiteOr(settings.periodYears ?? settings.years, defaultState.settings.periodYears),
     },
     allocations,
     transactions,
     etfs: Array.isArray(old.etfs) ? old.etfs.map((e: any) => ({ id: e.id ?? id(), name: e.name || "", ticker: e.ticker || "", asset: e.asset || allocations[0]?.name || "기타", country: e.country || "", issuer: e.issuer || "", fee: safeNumber(e.fee), style: e.style || "패시브", watch: Boolean(e.watch), memo: e.memo || "" })) : [],
     principles: Array.isArray(old.principles) ? old.principles : defaultState.principles,
   };
+}
+
+function MoneyInput({ value, onValueChange, ariaLabel, required = false, placeholder = "0" }: { value: number; onValueChange: (value: number) => void; ariaLabel: string; required?: boolean; placeholder?: string }) {
+  const [display, setDisplay] = useState(() => formatMoneyInput(value));
+  const focused = useRef(false);
+
+  useEffect(() => {
+    if (!focused.current) setDisplay(formatMoneyInput(value));
+  }, [value]);
+
+  const change = (event: ChangeEvent<HTMLInputElement>) => {
+    const digits = event.target.value.replace(/\D/g, "");
+    const normalized = digits.replace(/^0+(?=\d)/, "");
+    if (!normalized) {
+      setDisplay("");
+      onValueChange(0);
+      return;
+    }
+    const next = Number(normalized);
+    setDisplay(next.toLocaleString("ko-KR"));
+    onValueChange(next);
+  };
+
+  return <input
+    type="text"
+    inputMode="numeric"
+    pattern="[0-9,]*"
+    autoComplete="off"
+    value={display}
+    placeholder={placeholder}
+    aria-label={ariaLabel}
+    required={required}
+    onFocus={() => { focused.current = true; if (value === 0) setDisplay(""); }}
+    onChange={change}
+    onBlur={() => { focused.current = false; setDisplay(formatMoneyInput(value)); }}
+  />;
 }
 
 function Icon({ name }: { name: string }) {
@@ -149,7 +197,19 @@ export default function App() {
     return values.map((v, i) => `${values.length === 1 ? 50 : i / (values.length - 1) * 100},${82 - v / max * 66}`).join(" ");
   }, [state.transactions]);
 
-  const patchSettings = (key: keyof AppState["settings"], value: string | number) => setState((s) => ({ ...s, settings: { ...s.settings, [key]: value } }));
+  const patchSettings = (key: keyof AppState["settings"], value: string | number) => setState((s) => {
+    const settings = { ...s.settings, [key]: value };
+    if (key !== "monthlyBudget") return { ...s, settings };
+    const monthlyBudget = safeNumber(value);
+    return {
+      ...s,
+      settings,
+      allocations: s.allocations.map((a) => ({
+        ...a,
+        target: monthlyBudget ? Number((a.monthlyAmount / monthlyBudget * 100).toFixed(2)) : 0,
+      })),
+    };
+  });
   const download = (filename: string, content: string, type: string) => {
     const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([content], { type })); link.download = filename; link.click();
     setTimeout(() => URL.revokeObjectURL(link.href), 400);
@@ -244,12 +304,27 @@ export default function App() {
 }
 
 function AllocationView({ state, setState, analytics, total }: { state: AppState; setState: React.Dispatch<React.SetStateAction<AppState>>; analytics: any; total: number }) {
-  const add = () => setState((s) => ({ ...s, allocations: [...s.allocations, { id: id(), name: "새 자산군", target: 0, color: palette[s.allocations.length % palette.length] }] }));
-  const update = (itemId: string, key: "name" | "target", value: string | number) => setState((s) => ({ ...s, allocations: s.allocations.map((a) => a.id === itemId ? { ...a, [key]: value } : a) }));
+  const allocatedTotal = state.allocations.reduce((sum, a) => sum + safeNumber(a.monthlyAmount), 0);
+  const remaining = state.settings.monthlyBudget - allocatedTotal;
+  const add = () => setState((s) => ({ ...s, allocations: [...s.allocations, { id: id(), name: "새 자산군", target: 0, monthlyAmount: 0, color: palette[s.allocations.length % palette.length] }] }));
+  const update = (itemId: string, key: "name" | "target" | "monthlyAmount", value: string | number) => setState((s) => ({
+    ...s,
+    allocations: s.allocations.map((a) => {
+      if (a.id !== itemId) return a;
+      if (key === "name") return { ...a, name: String(value) };
+      if (key === "target") {
+        const target = safeNumber(value);
+        return { ...a, target, monthlyAmount: Math.round(s.settings.monthlyBudget * target / 100) };
+      }
+      const monthlyAmount = safeNumber(value);
+      return { ...a, monthlyAmount, target: s.settings.monthlyBudget ? Number((monthlyAmount / s.settings.monthlyBudget * 100).toFixed(2)) : 0 };
+    }),
+  }));
   const remove = (itemId: string) => { if (state.allocations.length > 1 && confirm("이 자산군을 삭제할까요? 연결된 기록은 삭제되지 않습니다.")) setState((s) => ({ ...s, allocations: s.allocations.filter((a) => a.id !== itemId) })); };
-  return <section className="page-stack"><div className="page-intro"><div><h2>목표 자산배분</h2><p>먼저 비중을 정하고, 매월 투자금이 계획대로 흘러가게 만드세요.</p></div><button className="primary" onClick={add}><Icon name="plus"/> 자산군 추가</button></div>
+  return <section className="page-stack"><div className="page-intro"><div><h2>목표 자산배분</h2><p>각 자산의 월 배정금액을 직접 입력하면 목표 비중이 자동으로 계산됩니다.</p></div><button className="primary" onClick={add}><Icon name="plus"/> 자산군 추가</button></div>
     <div className={`allocation-alert ${Math.abs(total - 100) < .01 ? "ok" : "warn"}`}><div><Icon name={Math.abs(total - 100) < .01 ? "check" : "allocation"}/><span>목표 비중 합계</span></div><strong>{pct(total)}</strong><p>{Math.abs(total - 100) < .01 ? "좋아요. 목표 비중이 정확히 100%예요." : `${pct(Math.abs(100 - total))}를 ${total < 100 ? "더 배분" : "줄여"}야 합니다.`}</p></div>
-    <div className="allocation-cards">{state.allocations.map((a) => { const currentValue = analytics.byAsset[a.name] || 0; const current = analytics.value ? currentValue / analytics.value * 100 : 0; const delta = current - a.target; return <article key={a.id} className="allocation-card" style={{ "--asset-color": a.color } as React.CSSProperties}><div className="asset-card-head"><span className="asset-symbol">{a.name.slice(0, 1)}</span><input value={a.name} aria-label="자산군 이름" onChange={(e) => update(a.id, "name", e.target.value)}/><button onClick={() => remove(a.id)} aria-label={`${a.name} 삭제`}><Icon name="trash"/></button></div><div className="asset-stats"><label>목표 비중<div><input type="number" min="0" max="100" step=".5" value={a.target} onChange={(e) => update(a.id, "target", safeNumber(e.target.value))}/><span>%</span></div></label><dl><div><dt>월 배정금액</dt><dd>{won(state.settings.monthlyBudget * a.target / 100)}</dd></div><div><dt>현재 평가금액</dt><dd>{won(currentValue)}</dd></div><div><dt>현재 비중</dt><dd>{pct(current)}</dd></div></dl></div><div className="mini-progress"><i style={{ width: `${Math.min(100, current)}%` }}/><span style={{ left: `${Math.min(100, a.target)}%` }}/></div><p className={Math.abs(delta) >= state.settings.threshold ? "attention" : ""}>{delta >= 0 ? "+" : ""}{delta.toFixed(1)}%p · {Math.abs(delta) >= state.settings.threshold ? "조정 검토" : "허용 범위"}</p></article>; })}</div>
+    <div className={`allocation-budget ${remaining === 0 ? "balanced" : remaining > 0 ? "remaining" : "over"}`}><div><span>이번 달 투자예산</span><strong>{won(state.settings.monthlyBudget)}</strong></div><div><span>배정 합계</span><strong>{won(allocatedTotal)}</strong></div><div><span>{remaining >= 0 ? "남은 금액" : "초과 금액"}</span><strong>{won(Math.abs(remaining))}</strong></div><p>{remaining === 0 ? "월 투자예산을 모두 배정했습니다." : remaining > 0 ? "아직 배정하지 않은 금액이 있습니다." : "월 투자예산을 초과했습니다. 자산별 금액을 조정해 주세요."}</p></div>
+    <div className="allocation-cards">{state.allocations.map((a) => { const currentValue = analytics.byAsset[a.name] || 0; const current = analytics.value ? currentValue / analytics.value * 100 : 0; const delta = current - a.target; return <article key={a.id} className="allocation-card" style={{ "--asset-color": a.color } as React.CSSProperties}><div className="asset-card-head"><span className="asset-symbol">{a.name.slice(0, 1)}</span><input value={a.name} aria-label="자산군 이름" onChange={(e) => update(a.id, "name", e.target.value)}/><button onClick={() => remove(a.id)} aria-label={`${a.name} 삭제`}><Icon name="trash"/></button></div><div className="asset-stats"><div className="asset-inputs"><label>월 배정금액<div className="money-input"><MoneyInput value={a.monthlyAmount} onValueChange={(value) => update(a.id, "monthlyAmount", value)} ariaLabel={`${a.name} 월 배정금액`}/><span>원</span></div></label><label>목표 비중<div><input type="number" min="0" max="100" step=".5" value={a.target} onChange={(e) => update(a.id, "target", safeNumber(e.target.value))}/><span>%</span></div></label></div><dl><div><dt>현재 평가금액</dt><dd>{won(currentValue)}</dd></div><div><dt>현재 비중</dt><dd>{pct(current)}</dd></div><div><dt>예산 내 비중</dt><dd>{pct(state.settings.monthlyBudget ? a.monthlyAmount / state.settings.monthlyBudget * 100 : 0)}</dd></div></dl></div><div className="mini-progress"><i style={{ width: `${Math.min(100, current)}%` }}/><span style={{ left: `${Math.min(100, a.target)}%` }}/></div><p className={Math.abs(delta) >= state.settings.threshold ? "attention" : ""}>{delta >= 0 ? "+" : ""}{delta.toFixed(1)}%p · {Math.abs(delta) >= state.settings.threshold ? "조정 검토" : "허용 범위"}</p></article>; })}</div>
   </section>;
 }
 
@@ -280,7 +355,7 @@ function TransactionsView({ state, setState, exportCsv }: { state: AppState; set
   };
   const remove = (txId: string) => { if (confirm("이 투자 기록을 삭제할까요?")) setState((s) => ({ ...s, transactions: s.transactions.filter((t) => t.id !== txId) })); };
   return <section className="page-stack"><div className="page-intro"><div><h2>투자 기록</h2><p>기존 기록의 연필 버튼을 누르면 내용을 수정할 수 있습니다.</p></div><div className="action-row"><button className="secondary" onClick={exportCsv}><Icon name="download"/> CSV</button><button className="primary" onClick={startAdd}><Icon name="plus"/> 기록 추가</button></div></div>
-    {open && <form className="entry-form" onSubmit={submit}><div className="form-head"><h3>{editingId ? "투자 기록 수정" : "새 투자 기록"}</h3><button type="button" onClick={closeForm}>닫기</button></div><div className="form-grid"><label>날짜<input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })}/></label><label>유형<select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as TxType })}><option>매수</option><option>매도</option><option>배당</option></select></label><label>자산군<select value={form.asset} onChange={(e) => setForm({ ...form, asset: e.target.value })}>{state.allocations.map((a) => <option key={a.id}>{a.name}</option>)}</select></label><label>계좌<select value={form.account} onChange={(e) => setForm({ ...form, account: e.target.value })}><option>ISA</option><option>일반 증권계좌</option><option>연금저축</option><option>IRP</option><option>기타</option></select></label><label>상품명<input required placeholder="예: 미국 대표지수 ETF" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}/></label><label>티커<input placeholder="예: 123456" value={form.ticker} onChange={(e) => setForm({ ...form, ticker: e.target.value })}/></label><label>거래 가격<input required type="number" min="0" value={form.price || ""} onChange={(e) => setForm({ ...form, price: safeNumber(e.target.value) })}/></label><label>수량<input required type="number" min="0" step=".0001" value={form.qty || ""} onChange={(e) => setForm({ ...form, qty: safeNumber(e.target.value) })}/></label><label>현재 가격<input type="number" min="0" value={form.currentPrice || ""} onChange={(e) => setForm({ ...form, currentPrice: safeNumber(e.target.value) })}/></label><label className="wide">메모<input placeholder="투자 이유 또는 당시 판단" value={form.memo} onChange={(e) => setForm({ ...form, memo: e.target.value })}/></label></div><div className="form-total"><span>예상 거래금액</span><strong>{won(form.price * form.qty)}</strong><button className="primary" type="submit">{editingId ? "수정 내용 저장" : "기록 저장"}</button></div></form>}
+    {open && <form className="entry-form" onSubmit={submit}><div className="form-head"><h3>{editingId ? "투자 기록 수정" : "새 투자 기록"}</h3><button type="button" onClick={closeForm}>닫기</button></div><div className="form-grid"><label>날짜<input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })}/></label><label>유형<select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as TxType })}><option>매수</option><option>매도</option><option>배당</option></select></label><label>자산군<select value={form.asset} onChange={(e) => setForm({ ...form, asset: e.target.value })}>{state.allocations.map((a) => <option key={a.id}>{a.name}</option>)}</select></label><label>계좌<select value={form.account} onChange={(e) => setForm({ ...form, account: e.target.value })}><option>ISA</option><option>일반 증권계좌</option><option>연금저축</option><option>IRP</option><option>기타</option></select></label><label>상품명<input required placeholder="예: 미국 대표지수 ETF" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}/></label><label>티커<input placeholder="예: 123456" value={form.ticker} onChange={(e) => setForm({ ...form, ticker: e.target.value })}/></label><label>거래 가격<MoneyInput required value={form.price} onValueChange={(value) => setForm({ ...form, price: value })} ariaLabel="거래 가격"/></label><label>수량<input required type="number" min="0" step=".0001" value={form.qty || ""} onChange={(e) => setForm({ ...form, qty: safeNumber(e.target.value) })}/></label><label>현재 가격<MoneyInput value={form.currentPrice} onValueChange={(value) => setForm({ ...form, currentPrice: value })} ariaLabel="현재 가격"/></label><label className="wide">메모<input placeholder="투자 이유 또는 당시 판단" value={form.memo} onChange={(e) => setForm({ ...form, memo: e.target.value })}/></label></div><div className="form-total"><span>예상 거래금액</span><strong>{won(form.price * form.qty)}</strong><button className="primary" type="submit">{editingId ? "수정 내용 저장" : "기록 저장"}</button></div></form>}
     <div className="records-mobile">{state.transactions.map((t) => <article key={t.id}><div><span className={`tx-type ${t.type}`}>{t.type}</span><small>{t.date}</small><span className="mobile-row-actions"><button onClick={() => startEdit(t)} aria-label="기록 수정"><Icon name="edit"/></button><button onClick={() => remove(t.id)} aria-label="기록 삭제"><Icon name="trash"/></button></span></div><h3>{t.name}<em>{t.ticker}</em></h3><dl><div><dt>거래금액</dt><dd>{won(t.price * t.qty)}</dd></div><div><dt>현재가치</dt><dd>{won(t.currentPrice * t.qty)}</dd></div><div><dt>수익률</dt><dd className={t.currentPrice >= t.price ? "positive" : "negative"}>{pct(t.price ? (t.currentPrice - t.price) / t.price * 100 : 0, 2)}</dd></div></dl><p>{t.account} · {t.asset}{t.memo ? ` · ${t.memo}` : ""}</p></article>)}</div>
     <div className="data-table"><table><thead><tr><th>날짜</th><th>유형</th><th>상품 / 자산군</th><th>계좌</th><th className="right">매수가 × 수량</th><th className="right">현재 평가액</th><th className="right">수익률</th><th>관리</th></tr></thead><tbody>{state.transactions.map((t) => { const rate = t.price ? (t.currentPrice - t.price) / t.price * 100 : 0; return <tr key={t.id}><td>{t.date}</td><td><span className={`tx-type ${t.type}`}>{t.type}</span></td><td><b>{t.name}</b><small>{t.ticker} · {t.asset}</small></td><td>{t.account}</td><td className="right">{won(t.price * t.qty)}<small>{won(t.price)} × {t.qty}</small></td><td className="right"><b>{won(t.currentPrice * t.qty)}</b></td><td className={`right ${rate >= 0 ? "positive" : "negative"}`}>{rate >= 0 ? "+" : ""}{pct(rate, 2)}</td><td><span className="row-actions"><button className="icon-button edit" onClick={() => startEdit(t)} aria-label="기록 수정"><Icon name="edit"/></button><button className="icon-button" onClick={() => remove(t.id)} aria-label="기록 삭제"><Icon name="trash"/></button></span></td></tr>; })}</tbody></table>{!state.transactions.length && <Empty>첫 투자 기록을 추가해 보세요.</Empty>}</div>
   </section>;
@@ -320,5 +395,5 @@ function RebalanceView({ state, analytics }: { state: AppState; analytics: any }
 
 function PlanView({ state, setState, patchSettings, goalProgress }: { state: AppState; setState: React.Dispatch<React.SetStateAction<AppState>>; patchSettings: (key: keyof AppState["settings"], value: string | number) => void; goalProgress: number }) {
   const future = useMemo(() => { const monthly = state.settings.monthlyBudget; const months = state.settings.periodYears * 12; const r = state.settings.targetReturn / 100 / 12; const value = r ? monthly * ((Math.pow(1 + r, months) - 1) / r) : monthly * months; const paid = monthly * months; return { value, paid, gain: value - paid }; }, [state.settings]);
-  return <section className="page-stack"><div className="page-intro"><div><h2>목표와 투자 원칙</h2><p>시장 상황이 흔들려도 돌아올 수 있는 기준을 직접 적어두세요.</p></div></div><div className="plan-grid"><article className="panel settings-panel"><div className="panel-head"><div><span className="eyebrow">MY GOAL</span><h3>투자 목표</h3></div><b>{pct(goalProgress, 0)}</b></div><div className="stack-form"><label>목표 이름<input value={state.settings.goalName} onChange={(e) => patchSettings("goalName", e.target.value)}/></label><label>목표 금액<input type="number" min="0" step="100000" value={state.settings.goalAmount} onChange={(e) => patchSettings("goalAmount", safeNumber(e.target.value))}/></label><div className="two-fields"><label>월 투자예산<input type="number" min="0" step="10000" value={state.settings.monthlyBudget} onChange={(e) => patchSettings("monthlyBudget", safeNumber(e.target.value))}/></label><label>투자기간 (년)<input type="number" min="1" max="60" value={state.settings.periodYears} onChange={(e) => patchSettings("periodYears", safeNumber(e.target.value))}/></label></div><div className="two-fields"><label>예상 연 수익률 (%)<input type="number" min="0" max="50" step=".1" value={state.settings.targetReturn} onChange={(e) => patchSettings("targetReturn", safeNumber(e.target.value))}/></label><label>리밸런싱 허용편차<input type="number" min="0" max="30" step=".5" value={state.settings.threshold} onChange={(e) => patchSettings("threshold", safeNumber(e.target.value))}/></label></div></div><div className="progress large"><i style={{ width: `${goalProgress}%` }}/></div></article><article className="panel compound-panel"><span className="eyebrow">COMPOUND ESTIMATE</span><h3>복리 예상 계산</h3><div className="future-value"><span>{state.settings.periodYears}년 후 예상 자산</span><strong>{won(future.value)}</strong></div><dl><div><dt>예상 총 납입금</dt><dd>{won(future.paid)}</dd></div><div><dt>예상 투자수익</dt><dd>{won(future.gain)}</dd></div><div><dt>72법칙 예상</dt><dd>{state.settings.targetReturn ? `${(72 / state.settings.targetReturn).toFixed(1)}년` : "-"}</dd></div></dl><p>예상 수익률이 매년 동일하다는 단순 가정이며 실제 수익을 보장하지 않습니다.</p></article></div><article className="panel principles-panel"><div className="panel-head"><div><span className="eyebrow">MY RULES</span><h3>나의 투자 원칙</h3></div><button className="secondary" onClick={() => setState((s) => ({ ...s, principles: [...s.principles, "새로운 투자 원칙"] }))}><Icon name="plus"/> 원칙 추가</button></div><div className="principle-list">{state.principles.map((rule, index) => <div key={index}><span>{String(index + 1).padStart(2, "0")}</span><input value={rule} onChange={(e) => setState((s) => ({ ...s, principles: s.principles.map((r, i) => i === index ? e.target.value : r) }))}/><button onClick={() => { if (confirm("이 원칙을 삭제할까요?")) setState((s) => ({ ...s, principles: s.principles.filter((_, i) => i !== index) })); }}><Icon name="trash"/></button></div>)}</div></article></section>;
+  return <section className="page-stack"><div className="page-intro"><div><h2>목표와 투자 원칙</h2><p>시장 상황이 흔들려도 돌아올 수 있는 기준을 직접 적어두세요.</p></div></div><div className="plan-grid"><article className="panel settings-panel"><div className="panel-head"><div><span className="eyebrow">MY GOAL</span><h3>투자 목표</h3></div><b>{pct(goalProgress, 0)}</b></div><div className="stack-form"><label>목표 이름<input value={state.settings.goalName} onChange={(e) => patchSettings("goalName", e.target.value)}/></label><label>목표 금액<MoneyInput value={state.settings.goalAmount} onValueChange={(value) => patchSettings("goalAmount", value)} ariaLabel="목표 금액"/></label><div className="two-fields"><label>월 투자예산<MoneyInput value={state.settings.monthlyBudget} onValueChange={(value) => patchSettings("monthlyBudget", value)} ariaLabel="월 투자예산"/></label><label>투자기간 (년)<input type="number" min="1" max="60" value={state.settings.periodYears} onChange={(e) => patchSettings("periodYears", safeNumber(e.target.value))}/></label></div><div className="two-fields"><label>예상 연 수익률 (%)<input type="number" min="0" max="50" step=".1" value={state.settings.targetReturn} onChange={(e) => patchSettings("targetReturn", safeNumber(e.target.value))}/></label><label>리밸런싱 허용편차<input type="number" min="0" max="30" step=".5" value={state.settings.threshold} onChange={(e) => patchSettings("threshold", safeNumber(e.target.value))}/></label></div></div><div className="progress large"><i style={{ width: `${goalProgress}%` }}/></div></article><article className="panel compound-panel"><span className="eyebrow">COMPOUND ESTIMATE</span><h3>복리 예상 계산</h3><div className="future-value"><span>{state.settings.periodYears}년 후 예상 자산</span><strong>{won(future.value)}</strong></div><dl><div><dt>예상 총 납입금</dt><dd>{won(future.paid)}</dd></div><div><dt>예상 투자수익</dt><dd>{won(future.gain)}</dd></div><div><dt>72법칙 예상</dt><dd>{state.settings.targetReturn ? `${(72 / state.settings.targetReturn).toFixed(1)}년` : "-"}</dd></div></dl><p>예상 수익률이 매년 동일하다는 단순 가정이며 실제 수익을 보장하지 않습니다.</p></article></div><article className="panel principles-panel"><div className="panel-head"><div><span className="eyebrow">MY RULES</span><h3>나의 투자 원칙</h3></div><button className="secondary" onClick={() => setState((s) => ({ ...s, principles: [...s.principles, "새로운 투자 원칙"] }))}><Icon name="plus"/> 원칙 추가</button></div><div className="principle-list">{state.principles.map((rule, index) => <div key={index}><span>{String(index + 1).padStart(2, "0")}</span><input value={rule} onChange={(e) => setState((s) => ({ ...s, principles: s.principles.map((r, i) => i === index ? e.target.value : r) }))}/><button onClick={() => { if (confirm("이 원칙을 삭제할까요?")) setState((s) => ({ ...s, principles: s.principles.filter((_, i) => i !== index) })); }}><Icon name="trash"/></button></div>)}</div></article></section>;
 }
