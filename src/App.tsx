@@ -2,13 +2,13 @@ import type React from "react";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import "./styles.css";
 
-type View = "dashboard" | "allocation" | "transactions" | "etf" | "rebalance" | "plan";
+type View = "dashboard" | "assets" | "allocation" | "transactions" | "etf" | "rebalance" | "plan";
 type TxType = "매수" | "매도" | "배당";
-type Allocation = { id: string; name: string; target: number; monthlyAmount: number; color: string };
+type Allocation = { id: string; name: string; target: number; monthlyAmount: number; currentAmount: number; color: string };
 type Transaction = { id: string; date: string; type: TxType; asset: string; name: string; ticker: string; account: string; price: number; qty: number; currentPrice: number; memo: string };
 type Etf = { id: string; name: string; ticker: string; asset: string; country: string; issuer: string; fee: number; style: string; watch: boolean; memo: string };
 type AppState = {
-  settings: { monthlyBudget: number; targetReturn: number; startDate: string; threshold: number; goalName: string; goalAmount: number; periodYears: number };
+  settings: { monthlyBudget: number; targetReturn: number; startDate: string; threshold: number; goalName: string; goalAmount: number; periodYears: number; assetUpdatedAt: string };
   allocations: Allocation[];
   transactions: Transaction[];
   etfs: Etf[];
@@ -22,13 +22,13 @@ const today = new Date().toISOString().slice(0, 10);
 const id = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36);
 
 const defaultState: AppState = {
-  settings: { monthlyBudget: 200000, targetReturn: 7, startDate: "2026-03-01", threshold: 5, goalName: "졸업 후 종잣돈", goalAmount: 30000000, periodYears: 10 },
+  settings: { monthlyBudget: 200000, targetReturn: 7, startDate: "2026-03-01", threshold: 5, goalName: "졸업 후 종잣돈", goalAmount: 30000000, periodYears: 10, assetUpdatedAt: today },
   allocations: [
-    { id: "a1", name: "국내 주식", target: 20, monthlyAmount: 40000, color: palette[0] },
-    { id: "a2", name: "해외 주식", target: 40, monthlyAmount: 80000, color: palette[1] },
-    { id: "a3", name: "채권", target: 20, monthlyAmount: 40000, color: palette[2] },
-    { id: "a4", name: "현금성 자산", target: 15, monthlyAmount: 30000, color: palette[3] },
-    { id: "a5", name: "대체 자산", target: 5, monthlyAmount: 10000, color: palette[4] },
+    { id: "a1", name: "국내 주식", target: 20, monthlyAmount: 40000, currentAmount: 111450, color: palette[0] },
+    { id: "a2", name: "해외 주식", target: 40, monthlyAmount: 80000, currentAmount: 250640, color: palette[1] },
+    { id: "a3", name: "채권", target: 20, monthlyAmount: 40000, currentAmount: 104760, color: palette[2] },
+    { id: "a4", name: "현금성 자산", target: 15, monthlyAmount: 30000, currentAmount: 0, color: palette[3] },
+    { id: "a5", name: "대체 자산", target: 5, monthlyAmount: 10000, currentAmount: 0, color: palette[4] },
   ],
   transactions: [
     { id: "t1", date: "2026-05-10", type: "매수", asset: "해외 주식", name: "미국 S&P500 ETF", ticker: "S&P500", account: "ISA", price: 18450, qty: 8, currentPrice: 19280, memo: "정기 매수" },
@@ -54,7 +54,7 @@ function migrateLegacy(raw: unknown): AppState {
   const settings = old.settings ?? {};
   const monthlyBudget = finiteOr(settings.monthlyBudget ?? settings.budget, defaultState.settings.monthlyBudget);
   const rawAllocations = Array.isArray(old.allocs) ? old.allocs : Array.isArray(old.allocations) ? old.allocations : defaultState.allocations;
-  const allocations = rawAllocations.map((a: any, index: number) => {
+  const allocationSeeds = rawAllocations.map((a: any, index: number) => {
     const target = safeNumber(a.target);
     const hasSavedAmount = a.monthlyAmount !== undefined || a.amount !== undefined;
     return {
@@ -62,12 +62,21 @@ function migrateLegacy(raw: unknown): AppState {
       name: a.name || "자산군",
       target,
       monthlyAmount: hasSavedAmount ? safeNumber(a.monthlyAmount ?? a.amount) : Math.round(monthlyBudget * target / 100),
+      currentAmount: a.currentAmount === undefined ? undefined : safeNumber(a.currentAmount),
       color: a.color || palette[index % palette.length],
     };
   });
   const transactions = Array.isArray(old.records)
-    ? old.records.map((r: any) => ({ id: r.id ?? id(), date: r.date || today, type: "매수" as TxType, asset: r.asset || allocations[0]?.name || "기타", name: r.name || "", ticker: r.ticker || r.name || "", account: r.account || "일반 증권계좌", price: safeNumber(r.buy), qty: safeNumber(r.qty), currentPrice: safeNumber(r.current), memo: r.memo || "" }))
+    ? old.records.map((r: any) => ({ id: r.id ?? id(), date: r.date || today, type: "매수" as TxType, asset: r.asset || allocationSeeds[0]?.name || "기타", name: r.name || "", ticker: r.ticker || r.name || "", account: r.account || "일반 증권계좌", price: safeNumber(r.buy), qty: safeNumber(r.qty), currentPrice: safeNumber(r.current), memo: r.memo || "" }))
     : Array.isArray(old.transactions) ? old.transactions : [];
+  const transactionValueByAsset: Record<string, number> = {};
+  transactions.filter((t: Transaction) => t.type === "매수").forEach((t: Transaction) => {
+    transactionValueByAsset[t.asset] = (transactionValueByAsset[t.asset] || 0) + safeNumber(t.currentPrice) * safeNumber(t.qty);
+  });
+  const allocations: Allocation[] = allocationSeeds.map((a: any) => ({
+    ...a,
+    currentAmount: a.currentAmount === undefined ? safeNumber(transactionValueByAsset[a.name]) : a.currentAmount,
+  }));
   return {
     settings: {
       monthlyBudget,
@@ -77,6 +86,7 @@ function migrateLegacy(raw: unknown): AppState {
       goalName: settings.goalName || settings.goal || defaultState.settings.goalName,
       goalAmount: finiteOr(settings.goalAmount, defaultState.settings.goalAmount),
       periodYears: finiteOr(settings.periodYears ?? settings.years, defaultState.settings.periodYears),
+      assetUpdatedAt: settings.assetUpdatedAt || today,
     },
     allocations,
     transactions,
@@ -124,6 +134,7 @@ function MoneyInput({ value, onValueChange, ariaLabel, required = false, placeho
 function Icon({ name }: { name: string }) {
   const paths: Record<string, React.ReactNode> = {
     dashboard: <><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></>,
+    assets: <><path d="M4 7h16v12H4z"/><path d="M7 7V5h10v2M4 11h16"/><circle cx="16.5" cy="15" r="1"/></>,
     allocation: <><path d="M12 3a9 9 0 1 0 9 9h-9V3Z"/><path d="M15 3.5A8.5 8.5 0 0 1 20.5 9H15V3.5Z"/></>,
     transactions: <><path d="M3 6h18M7 3v6M17 3v6M5 11h14v10H5z"/><path d="M8 15h3M8 18h7"/></>,
     etf: <><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></>,
@@ -176,14 +187,15 @@ export default function App() {
   const analytics = useMemo(() => {
     const rows = state.transactions.filter((t) => t.type === "매수");
     const invested = rows.reduce((sum, t) => sum + safeNumber(t.price) * safeNumber(t.qty), 0);
-    const value = rows.reduce((sum, t) => sum + safeNumber(t.currentPrice) * safeNumber(t.qty), 0);
+    const recordedValue = rows.reduce((sum, t) => sum + safeNumber(t.currentPrice) * safeNumber(t.qty), 0);
     const byAsset: Record<string, number> = {};
-    rows.forEach((t) => { byAsset[t.asset] = (byAsset[t.asset] || 0) + safeNumber(t.currentPrice) * safeNumber(t.qty); });
-    const profit = value - invested;
+    state.allocations.forEach((a) => { byAsset[a.name] = safeNumber(a.currentAmount); });
+    const value = state.allocations.reduce((sum, a) => sum + safeNumber(a.currentAmount), 0);
+    const profit = recordedValue - invested;
     const returnRate = invested ? (profit / invested) * 100 : 0;
     const months = new Set(rows.map((t) => t.date.slice(0, 7))).size || 1;
-    return { invested, value, profit, returnRate, byAsset, avgMonthly: invested / months };
-  }, [state.transactions]);
+    return { invested, value, recordedValue, profit, returnRate, byAsset, avgMonthly: invested / months };
+  }, [state.transactions, state.allocations]);
 
   const allocationTotal = state.allocations.reduce((sum, a) => sum + safeNumber(a.target), 0);
   const goalProgress = state.settings.goalAmount ? Math.min(100, analytics.value / state.settings.goalAmount * 100) : 0;
@@ -229,7 +241,8 @@ export default function App() {
   };
 
   const nav: { key: View; label: string; icon: string }[] = [
-    { key: "dashboard", label: "대시보드", icon: "dashboard" }, { key: "allocation", label: "자산 배분", icon: "allocation" },
+    { key: "dashboard", label: "대시보드", icon: "dashboard" }, { key: "assets", label: "현재 자산", icon: "assets" },
+    { key: "allocation", label: "월 투자 계획", icon: "allocation" },
     { key: "transactions", label: "투자 기록", icon: "transactions" }, { key: "etf", label: "ETF 후보", icon: "etf" },
     { key: "rebalance", label: "리밸런싱", icon: "rebalance" }, { key: "plan", label: "목표 · 원칙", icon: "plan" },
   ];
@@ -260,18 +273,18 @@ export default function App() {
 
         <div className="content">
           {view === "dashboard" && <>
-            <section className="welcome-row"><div><h2>좋은 투자 습관을 쌓고 있어요 <span>↗</span></h2><p>수익률보다 먼저, 이번 달 계획과 자산 비중을 확인해 보세요.</p></div><div className="period-pill"><span>투자 시작 후</span><b>{elapsedMonths}개월째</b></div></section>
+            <section className="welcome-row"><div><h2>내 자산의 현재 모습을 확인하세요 <span>↗</span></h2><p>총자산과 자산군별 보유금액을 먼저 확인하고, 필요한 투자 계획을 세워 보세요.</p></div><div className="period-pill"><span>자산 기준일</span><b>{state.settings.assetUpdatedAt}</b></div></section>
             <section className="metrics-grid">
               <Metric label="총 투자원금" value={won(analytics.invested)} note={`월 평균 ${won(analytics.avgMonthly)}`}/>
-              <Metric label="현재 평가금액" value={won(analytics.value)} note={`${state.transactions.filter((t) => t.type === "매수").length}건의 매수 기록`}/>
-              <Metric label="총 평가손익" value={`${analytics.profit >= 0 ? "+" : ""}${won(analytics.profit)}`} note={`${analytics.returnRate >= 0 ? "▲" : "▼"} ${pct(Math.abs(analytics.returnRate), 2)} 누적`} tone={analytics.profit >= 0 ? "positive" : "negative"}/>
+              <Metric label="현재 총자산" value={won(analytics.value)} note="현재 자산 탭의 입력값 기준"/>
+              <Metric label="기록 자산 손익" value={`${analytics.profit >= 0 ? "+" : ""}${won(analytics.profit)}`} note={`${analytics.returnRate >= 0 ? "▲" : "▼"} ${pct(Math.abs(analytics.returnRate), 2)} · 투자 기록 기준`} tone={analytics.profit >= 0 ? "positive" : "negative"}/>
               <Metric label="이번 달 투자예산" value={won(state.settings.monthlyBudget)} note={`목표 수익률 ${pct(state.settings.targetReturn)}`}/>
             </section>
             <section className="dashboard-grid">
               <article className="panel allocation-panel">
-                <div className="panel-head"><div><span className="eyebrow">ASSET MIX</span><h3>현재 자산 구성</h3></div><button className="text-button" onClick={() => setView("allocation")}>자세히 보기 →</button></div>
+                <div className="panel-head"><div><span className="eyebrow">ASSET MIX</span><h3>현재 자산 구성</h3></div><button className="text-button" onClick={() => setView("assets")}>금액 수정하기 →</button></div>
                 <div className="donut-wrap">
-                  <div className="donut" style={{ background: analytics.value ? `conic-gradient(${state.allocations.map((a, i) => { const before = state.allocations.slice(0, i).reduce((sum, x) => sum + (analytics.byAsset[x.name] || 0) / analytics.value * 100, 0); const current = (analytics.byAsset[a.name] || 0) / analytics.value * 100; return `${a.color} ${before}% ${before + current}%`; }).join(",")})` : "var(--soft)" }}><div><span>총 평가금액</span><strong>{won(analytics.value)}</strong></div></div>
+                  <div className="donut" style={{ background: analytics.value ? `conic-gradient(${state.allocations.map((a, i) => { const before = state.allocations.slice(0, i).reduce((sum, x) => sum + (analytics.byAsset[x.name] || 0) / analytics.value * 100, 0); const current = (analytics.byAsset[a.name] || 0) / analytics.value * 100; return `${a.color} ${before}% ${before + current}%`; }).join(",")})` : "var(--soft)" }}><div><span>현재 총자산</span><strong>{won(analytics.value)}</strong></div></div>
                   <div className="legend-list">{state.allocations.map((a) => { const current = analytics.value ? (analytics.byAsset[a.name] || 0) / analytics.value * 100 : 0; return <div key={a.id}><span className="color-dot" style={{ background: a.color }}/><b>{a.name}</b><em>{pct(current)}</em><small>목표 {pct(a.target, 0)}</small></div>; })}</div>
                 </div>
               </article>
@@ -290,7 +303,8 @@ export default function App() {
             <section className="disclaimer">이 서비스는 개인의 투자 기록과 학습을 돕는 도구이며, 특정 상품의 매수·매도 또는 수익을 보장하지 않습니다.</section>
           </>}
 
-          {view === "allocation" && <AllocationView state={state} setState={setState} analytics={analytics} total={allocationTotal}/>}
+          {view === "assets" && <AssetsView state={state} setState={setState} analytics={analytics} patchSettings={patchSettings}/>} 
+          {view === "allocation" && <AllocationView state={state} setState={setState} analytics={analytics} total={allocationTotal}/>} 
           {view === "transactions" && <TransactionsView state={state} setState={setState} exportCsv={exportCsv}/>}
           {view === "etf" && <EtfView state={state} setState={setState} filter={etfFilter} setFilter={setEtfFilter}/>}
           {view === "rebalance" && <RebalanceView state={state} analytics={analytics}/>}
@@ -303,10 +317,41 @@ export default function App() {
   );
 }
 
+function AssetsView({ state, setState, analytics, patchSettings }: { state: AppState; setState: React.Dispatch<React.SetStateAction<AppState>>; analytics: any; patchSettings: (key: keyof AppState["settings"], value: string | number) => void }) {
+  const activeAssets = state.allocations.filter((a) => a.currentAmount > 0);
+  const largest = [...state.allocations].sort((a, b) => b.currentAmount - a.currentAmount)[0];
+  const update = (itemId: string, key: "name" | "currentAmount", value: string | number) => setState((s) => ({
+    ...s,
+    allocations: s.allocations.map((a) => a.id === itemId ? { ...a, [key]: key === "currentAmount" ? safeNumber(value) : String(value) } : a),
+    settings: key === "currentAmount" ? { ...s.settings, assetUpdatedAt: today } : s.settings,
+  }));
+  const add = () => setState((s) => ({ ...s, allocations: [...s.allocations, { id: id(), name: "새 자산군", target: 0, monthlyAmount: 0, currentAmount: 0, color: palette[s.allocations.length % palette.length] }] }));
+
+  return <section className="page-stack assets-page">
+    <div className="page-intro"><div><h2>현재 나의 자산</h2><p>각 자산군의 현재 보유금액을 입력하면 총자산과 실제 비중이 바로 계산됩니다.</p></div><button className="primary" onClick={add}><Icon name="plus"/> 자산군 추가</button></div>
+    <div className="asset-overview">
+      <article className="asset-total-card"><span>현재 총자산</span><strong>{won(analytics.value)}</strong><p>아래에 입력한 모든 자산군의 합계입니다.</p></article>
+      <div className="asset-summary-grid">
+        <article><span>보유 중인 자산군</span><strong>{activeAssets.length}개</strong></article>
+        <article><span>가장 큰 자산군</span><strong>{largest?.currentAmount ? largest.name : "아직 없음"}</strong><small>{largest?.currentAmount && analytics.value ? pct(largest.currentAmount / analytics.value * 100) : "0.0%"}</small></article>
+        <label><span>자산 기준일</span><input type="date" value={state.settings.assetUpdatedAt} onChange={(e) => patchSettings("assetUpdatedAt", e.target.value)}/><small>금액을 바꾸면 오늘 날짜로 갱신됩니다.</small></label>
+      </div>
+    </div>
+    <div className="current-assets-list">
+      {state.allocations.map((a) => { const share = analytics.value ? a.currentAmount / analytics.value * 100 : 0; const gap = share - a.target; return <article key={a.id} className="current-asset-row" style={{ "--asset-color": a.color } as React.CSSProperties}>
+        <div className="current-asset-name"><span className="asset-symbol">{a.name.slice(0, 1)}</span><div><input value={a.name} aria-label="자산군 이름" onChange={(e) => update(a.id, "name", e.target.value)}/><small>목표 비중 {pct(a.target, 0)}</small></div></div>
+        <label className="current-amount-field"><span>현재 보유금액</span><div className="money-input"><MoneyInput value={a.currentAmount} onValueChange={(value) => update(a.id, "currentAmount", value)} ariaLabel={`${a.name} 현재 보유금액`}/><b>원</b></div></label>
+        <div className="current-asset-share"><div><span>현재 비중</span><strong>{pct(share)}</strong></div><div className="asset-share-bar"><i style={{ width: `${Math.min(100, share)}%` }}/><span style={{ left: `${Math.min(100, a.target)}%` }}/></div><small className={Math.abs(gap) >= state.settings.threshold ? "attention" : "stable"}>목표 대비 {gap >= 0 ? "+" : ""}{gap.toFixed(1)}%p</small></div>
+      </article>; })}
+    </div>
+    <div className="assets-note"><Icon name="check"/><div><strong>입력 내용은 자동 저장됩니다.</strong><p>금융기관과 자동 연동되지 않으므로 잔액이 바뀌면 직접 갱신해 주세요. 데이터는 현재 브라우저에만 저장됩니다.</p></div></div>
+  </section>;
+}
+
 function AllocationView({ state, setState, analytics, total }: { state: AppState; setState: React.Dispatch<React.SetStateAction<AppState>>; analytics: any; total: number }) {
   const allocatedTotal = state.allocations.reduce((sum, a) => sum + safeNumber(a.monthlyAmount), 0);
   const remaining = state.settings.monthlyBudget - allocatedTotal;
-  const add = () => setState((s) => ({ ...s, allocations: [...s.allocations, { id: id(), name: "새 자산군", target: 0, monthlyAmount: 0, color: palette[s.allocations.length % palette.length] }] }));
+  const add = () => setState((s) => ({ ...s, allocations: [...s.allocations, { id: id(), name: "새 자산군", target: 0, monthlyAmount: 0, currentAmount: 0, color: palette[s.allocations.length % palette.length] }] }));
   const update = (itemId: string, key: "name" | "target" | "monthlyAmount", value: string | number) => setState((s) => ({
     ...s,
     allocations: s.allocations.map((a) => {
@@ -321,7 +366,7 @@ function AllocationView({ state, setState, analytics, total }: { state: AppState
     }),
   }));
   const remove = (itemId: string) => { if (state.allocations.length > 1 && confirm("이 자산군을 삭제할까요? 연결된 기록은 삭제되지 않습니다.")) setState((s) => ({ ...s, allocations: s.allocations.filter((a) => a.id !== itemId) })); };
-  return <section className="page-stack"><div className="page-intro"><div><h2>목표 자산배분</h2><p>각 자산의 월 배정금액을 직접 입력하면 목표 비중이 자동으로 계산됩니다.</p></div><button className="primary" onClick={add}><Icon name="plus"/> 자산군 추가</button></div>
+  return <section className="page-stack"><div className="page-intro"><div><h2>월 투자 계획</h2><p>매달 투자할 금액을 자산군별로 나누면 배정 합계와 목표 비중이 자동으로 계산됩니다.</p></div><button className="primary" onClick={add}><Icon name="plus"/> 자산군 추가</button></div>
     <div className={`allocation-alert ${Math.abs(total - 100) < .01 ? "ok" : "warn"}`}><div><Icon name={Math.abs(total - 100) < .01 ? "check" : "allocation"}/><span>목표 비중 합계</span></div><strong>{pct(total)}</strong><p>{Math.abs(total - 100) < .01 ? "좋아요. 목표 비중이 정확히 100%예요." : `${pct(Math.abs(100 - total))}를 ${total < 100 ? "더 배분" : "줄여"}야 합니다.`}</p></div>
     <div className={`allocation-budget ${remaining === 0 ? "balanced" : remaining > 0 ? "remaining" : "over"}`}><div><span>이번 달 투자예산</span><strong>{won(state.settings.monthlyBudget)}</strong></div><div><span>배정 합계</span><strong>{won(allocatedTotal)}</strong></div><div><span>{remaining >= 0 ? "남은 금액" : "초과 금액"}</span><strong>{won(Math.abs(remaining))}</strong></div><p>{remaining === 0 ? "월 투자예산을 모두 배정했습니다." : remaining > 0 ? "아직 배정하지 않은 금액이 있습니다." : "월 투자예산을 초과했습니다. 자산별 금액을 조정해 주세요."}</p></div>
     <div className="allocation-cards">{state.allocations.map((a) => { const currentValue = analytics.byAsset[a.name] || 0; const current = analytics.value ? currentValue / analytics.value * 100 : 0; const delta = current - a.target; return <article key={a.id} className="allocation-card" style={{ "--asset-color": a.color } as React.CSSProperties}><div className="asset-card-head"><span className="asset-symbol">{a.name.slice(0, 1)}</span><input value={a.name} aria-label="자산군 이름" onChange={(e) => update(a.id, "name", e.target.value)}/><button onClick={() => remove(a.id)} aria-label={`${a.name} 삭제`}><Icon name="trash"/></button></div><div className="asset-stats"><div className="asset-inputs"><label>월 배정금액<div className="money-input"><MoneyInput value={a.monthlyAmount} onValueChange={(value) => update(a.id, "monthlyAmount", value)} ariaLabel={`${a.name} 월 배정금액`}/><span>원</span></div></label><label>목표 비중<div><input type="number" min="0" max="100" step=".5" value={a.target} onChange={(e) => update(a.id, "target", safeNumber(e.target.value))}/><span>%</span></div></label></div><dl><div><dt>현재 평가금액</dt><dd>{won(currentValue)}</dd></div><div><dt>현재 비중</dt><dd>{pct(current)}</dd></div><div><dt>예산 내 비중</dt><dd>{pct(state.settings.monthlyBudget ? a.monthlyAmount / state.settings.monthlyBudget * 100 : 0)}</dd></div></dl></div><div className="mini-progress"><i style={{ width: `${Math.min(100, current)}%` }}/><span style={{ left: `${Math.min(100, a.target)}%` }}/></div><p className={Math.abs(delta) >= state.settings.threshold ? "attention" : ""}>{delta >= 0 ? "+" : ""}{delta.toFixed(1)}%p · {Math.abs(delta) >= state.settings.threshold ? "조정 검토" : "허용 범위"}</p></article>; })}</div>
