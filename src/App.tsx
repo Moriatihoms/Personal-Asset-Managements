@@ -164,6 +164,7 @@ export default function App() {
   const [etfFilter, setEtfFilter] = useState("전체");
   const [mobileNav, setMobileNav] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const pageHeadingRef = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
     try {
@@ -183,6 +184,15 @@ export default function App() {
   useEffect(() => { if (ready) localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }, [state, ready]);
   useEffect(() => { document.documentElement.dataset.theme = dark ? "dark" : "light"; if (ready) localStorage.setItem("portfolio_theme", dark ? "dark" : "light"); }, [dark, ready]);
   useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(""), 2600); return () => clearTimeout(timer); }, [toast]);
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "auto" });
+    pageHeadingRef.current?.focus({ preventScroll: true });
+  }, [view]);
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setMobileNav(false); };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, []);
 
   const analytics = useMemo(() => {
     const rows = state.transactions.filter((t) => t.type === "매수");
@@ -250,23 +260,24 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <aside className={`sidebar ${mobileNav ? "open" : ""}`}>
+      <a className="skip-link" href="#main-content">본문으로 바로가기</a>
+      <aside className={`sidebar ${mobileNav ? "open" : ""}`} aria-label="포트폴리오 사이드바">
         <div className="brand"><span className="brand-mark">P</span><div><b>Portfoli<span>o</span></b><small>STUDENT INVESTING</small></div></div>
-        <nav aria-label="주 메뉴">
-          {nav.map((item) => <button key={item.key} className={view === item.key ? "active" : ""} onClick={() => { setView(item.key); setMobileNav(false); }}><Icon name={item.icon}/><span>{item.label}</span>{item.key === "rebalance" && <i>{state.allocations.filter((a) => Math.abs((analytics.byAsset[a.name] || 0) / (analytics.value || 1) * 100 - a.target) >= state.settings.threshold).length}</i>}</button>)}
+        <nav id="portfolio-navigation" aria-label="주 메뉴">
+          {nav.map((item) => <button key={item.key} className={view === item.key ? "active" : ""} aria-current={view === item.key ? "page" : undefined} onClick={() => { setView(item.key); setMobileNav(false); }}><Icon name={item.icon}/><span>{item.label}</span>{item.key === "rebalance" && <i>{state.allocations.filter((a) => Math.abs((analytics.byAsset[a.name] || 0) / (analytics.value || 1) * 100 - a.target) >= state.settings.threshold).length}</i>}</button>)}
         </nav>
         <div className="sidebar-quote"><span>이번 달 원칙</span><p>시장보다 계획을<br/>먼저 확인하세요.</p><small>소액 · 분산 · 장기</small></div>
         <div className="sidebar-footer"><button onClick={() => setDark((v) => !v)} aria-label="색상 모드 전환"><Icon name="moon"/><span>{dark ? "라이트 모드" : "다크 모드"}</span></button><span className="local-badge"><i/> 이 기기에 자동 저장</span></div>
       </aside>
 
-      <main className="main">
+      <main className="main" id="main-content">
         <header className="topbar">
-          <div className="title-wrap"><button className="menu-button" onClick={() => setMobileNav((v) => !v)} aria-label="메뉴 열기">☰</button><div><p>MY PORTFOLIO</p><h1>{pageTitle}</h1></div></div>
+          <div className="title-wrap"><button className="menu-button" onClick={() => setMobileNav((v) => !v)} aria-label={mobileNav ? "메뉴 닫기" : "메뉴 열기"} aria-expanded={mobileNav} aria-controls="portfolio-navigation">☰</button><div><p>MY PORTFOLIO</p><h1 ref={pageHeadingRef} tabIndex={-1}>{pageTitle}</h1></div></div>
           <div className="header-actions">
             <span className="header-save"><i/>변경사항 자동 저장</span>
             <button className="secondary" onClick={exportJson}><Icon name="download"/> JSON 백업</button>
             <button className="secondary compact" onClick={() => fileRef.current?.click()}>복원</button>
-            <button className="primary" onClick={() => setView("transactions")}><Icon name="plus"/> 투자 기록</button>
+            <button className="primary" onClick={() => setView("assets")}><Icon name="assets"/> 자산 업데이트</button>
             <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={importJson}/>
           </div>
         </header>
@@ -275,8 +286,8 @@ export default function App() {
           {view === "dashboard" && <>
             <section className="welcome-row"><div><h2>내 자산의 현재 모습을 확인하세요 <span>↗</span></h2><p>총자산과 자산군별 보유금액을 먼저 확인하고, 필요한 투자 계획을 세워 보세요.</p></div><div className="period-pill"><span>자산 기준일</span><b>{state.settings.assetUpdatedAt}</b></div></section>
             <section className="metrics-grid">
-              <Metric label="총 투자원금" value={won(analytics.invested)} note={`월 평균 ${won(analytics.avgMonthly)}`}/>
               <Metric label="현재 총자산" value={won(analytics.value)} note="현재 자산 탭의 입력값 기준"/>
+              <Metric label="총 투자원금" value={won(analytics.invested)} note={`월 평균 ${won(analytics.avgMonthly)}`}/>
               <Metric label="기록 자산 손익" value={`${analytics.profit >= 0 ? "+" : ""}${won(analytics.profit)}`} note={`${analytics.returnRate >= 0 ? "▲" : "▼"} ${pct(Math.abs(analytics.returnRate), 2)} · 투자 기록 기준`} tone={analytics.profit >= 0 ? "positive" : "negative"}/>
               <Metric label="이번 달 투자예산" value={won(state.settings.monthlyBudget)} note={`목표 수익률 ${pct(state.settings.targetReturn)}`}/>
             </section>
@@ -311,8 +322,11 @@ export default function App() {
           {view === "plan" && <PlanView state={state} setState={setState} patchSettings={patchSettings} goalProgress={goalProgress}/>}
         </div>
       </main>
+      <nav className="mobile-quick-nav" aria-label="모바일 빠른 메뉴">
+        {nav.slice(0, 4).map((item) => <button key={item.key} className={view === item.key ? "active" : ""} aria-current={view === item.key ? "page" : undefined} onClick={() => setView(item.key)}><Icon name={item.icon}/><span>{item.label === "월 투자 계획" ? "월 계획" : item.label}</span></button>)}
+      </nav>
       {mobileNav && <button className="scrim" onClick={() => setMobileNav(false)} aria-label="메뉴 닫기"/>}
-      {toast && <div className="toast"><Icon name="check"/>{toast}</div>}
+      {toast && <div className="toast" role="status" aria-live="polite"><Icon name="check"/>{toast}</div>}
     </div>
   );
 }
@@ -320,28 +334,31 @@ export default function App() {
 function AssetsView({ state, setState, analytics, patchSettings }: { state: AppState; setState: React.Dispatch<React.SetStateAction<AppState>>; analytics: any; patchSettings: (key: keyof AppState["settings"], value: string | number) => void }) {
   const activeAssets = state.allocations.filter((a) => a.currentAmount > 0);
   const largest = [...state.allocations].sort((a, b) => b.currentAmount - a.currentAmount)[0];
+  const assetAgeDays = Math.max(0, Math.floor((Date.now() - new Date(`${state.settings.assetUpdatedAt}T00:00:00`).getTime()) / 86400000));
+  const freshness = assetAgeDays <= 7 ? { label: "최신 상태", tone: "fresh" } : assetAgeDays <= 30 ? { label: "업데이트 권장", tone: "soon" } : { label: "금액 확인 필요", tone: "stale" };
   const update = (itemId: string, key: "name" | "currentAmount", value: string | number) => setState((s) => ({
     ...s,
     allocations: s.allocations.map((a) => a.id === itemId ? { ...a, [key]: key === "currentAmount" ? safeNumber(value) : String(value) } : a),
     settings: key === "currentAmount" ? { ...s.settings, assetUpdatedAt: today } : s.settings,
   }));
   const add = () => setState((s) => ({ ...s, allocations: [...s.allocations, { id: id(), name: "새 자산군", target: 0, monthlyAmount: 0, currentAmount: 0, color: palette[s.allocations.length % palette.length] }] }));
+  const remove = (itemId: string) => { if (state.allocations.length > 1 && confirm("이 자산군을 삭제할까요? 연결된 투자 기록은 삭제되지 않습니다.")) setState((s) => ({ ...s, allocations: s.allocations.filter((a) => a.id !== itemId) })); };
 
   return <section className="page-stack assets-page">
     <div className="page-intro"><div><h2>현재 나의 자산</h2><p>각 자산군의 현재 보유금액을 입력하면 총자산과 실제 비중이 바로 계산됩니다.</p></div><button className="primary" onClick={add}><Icon name="plus"/> 자산군 추가</button></div>
     <div className="asset-overview">
-      <article className="asset-total-card"><span>현재 총자산</span><strong>{won(analytics.value)}</strong><p>아래에 입력한 모든 자산군의 합계입니다.</p></article>
+      <article className="asset-total-card" aria-live="polite"><span>현재 총자산</span><strong>{won(analytics.value)}</strong><p>아래에 입력한 모든 자산군의 합계입니다.</p></article>
       <div className="asset-summary-grid">
         <article><span>보유 중인 자산군</span><strong>{activeAssets.length}개</strong></article>
         <article><span>가장 큰 자산군</span><strong>{largest?.currentAmount ? largest.name : "아직 없음"}</strong><small>{largest?.currentAmount && analytics.value ? pct(largest.currentAmount / analytics.value * 100) : "0.0%"}</small></article>
-        <label><span>자산 기준일</span><input type="date" value={state.settings.assetUpdatedAt} onChange={(e) => patchSettings("assetUpdatedAt", e.target.value)}/><small>금액을 바꾸면 오늘 날짜로 갱신됩니다.</small></label>
+        <label><span>자산 기준일 <em className={`freshness ${freshness.tone}`}>{freshness.label}</em></span><input type="date" value={state.settings.assetUpdatedAt} onChange={(e) => patchSettings("assetUpdatedAt", e.target.value)}/><small>{assetAgeDays === 0 ? "오늘 갱신한 금액입니다." : `${assetAgeDays}일 전에 갱신한 금액입니다.`}</small></label>
       </div>
     </div>
     <div className="current-assets-list">
       {state.allocations.map((a) => { const share = analytics.value ? a.currentAmount / analytics.value * 100 : 0; const gap = share - a.target; return <article key={a.id} className="current-asset-row" style={{ "--asset-color": a.color } as React.CSSProperties}>
-        <div className="current-asset-name"><span className="asset-symbol">{a.name.slice(0, 1)}</span><div><input value={a.name} aria-label="자산군 이름" onChange={(e) => update(a.id, "name", e.target.value)}/><small>목표 비중 {pct(a.target, 0)}</small></div></div>
+        <div className="current-asset-name"><span className="asset-symbol">{a.name.slice(0, 1)}</span><div><input value={a.name} aria-label={`${a.name} 자산군 이름`} onChange={(e) => update(a.id, "name", e.target.value)}/><small>목표 비중 {pct(a.target, 0)}</small></div><button className="asset-remove" onClick={() => remove(a.id)} aria-label={`${a.name} 삭제`}><Icon name="trash"/></button></div>
         <label className="current-amount-field"><span>현재 보유금액</span><div className="money-input"><MoneyInput value={a.currentAmount} onValueChange={(value) => update(a.id, "currentAmount", value)} ariaLabel={`${a.name} 현재 보유금액`}/><b>원</b></div></label>
-        <div className="current-asset-share"><div><span>현재 비중</span><strong>{pct(share)}</strong></div><div className="asset-share-bar"><i style={{ width: `${Math.min(100, share)}%` }}/><span style={{ left: `${Math.min(100, a.target)}%` }}/></div><small className={Math.abs(gap) >= state.settings.threshold ? "attention" : "stable"}>목표 대비 {gap >= 0 ? "+" : ""}{gap.toFixed(1)}%p</small></div>
+        <div className="current-asset-share"><div><span>현재 비중</span><strong>{pct(share)}</strong></div><div className="asset-share-bar" role="progressbar" aria-label={`${a.name} 현재 비중`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Number(share.toFixed(1))}><i style={{ width: `${Math.min(100, share)}%` }}/><span style={{ left: `${Math.min(100, a.target)}%` }}/></div><small className={Math.abs(gap) >= state.settings.threshold ? "attention" : "stable"}>목표 대비 {gap >= 0 ? "+" : ""}{gap.toFixed(1)}%p</small></div>
       </article>; })}
     </div>
     <div className="assets-note"><Icon name="check"/><div><strong>입력 내용은 자동 저장됩니다.</strong><p>금융기관과 자동 연동되지 않으므로 잔액이 바뀌면 직접 갱신해 주세요. 데이터는 현재 브라우저에만 저장됩니다.</p></div></div>
@@ -376,19 +393,24 @@ function AllocationView({ state, setState, analytics, total }: { state: AppState
 function TransactionsView({ state, setState, exportCsv }: { state: AppState; setState: React.Dispatch<React.SetStateAction<AppState>>; exportCsv: () => void }) {
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [formError, setFormError] = useState("");
   const [form, setForm] = useState({ date: today, type: "매수" as TxType, asset: state.allocations[0]?.name || "기타", name: "", ticker: "", account: "ISA", price: 0, qty: 0, currentPrice: 0, memo: "" });
   const emptyForm = () => ({ date: today, type: "매수" as TxType, asset: state.allocations[0]?.name || "기타", name: "", ticker: "", account: "ISA", price: 0, qty: 0, currentPrice: 0, memo: "" });
-  const startAdd = () => { setEditingId(null); setForm(emptyForm()); setOpen(true); };
+  const startAdd = () => { setEditingId(null); setForm(emptyForm()); setFormError(""); setOpen(true); };
   const startEdit = (transaction: Transaction) => {
     setEditingId(transaction.id);
+    setFormError("");
     setForm({ date: transaction.date, type: transaction.type, asset: transaction.asset, name: transaction.name, ticker: transaction.ticker, account: transaction.account, price: transaction.price, qty: transaction.qty, currentPrice: transaction.currentPrice, memo: transaction.memo });
     setOpen(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
-  const closeForm = () => { setOpen(false); setEditingId(null); };
+  const closeForm = () => { setOpen(false); setEditingId(null); setFormError(""); };
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (!form.name || !form.price || !form.qty) return;
+    if (!form.name.trim()) { setFormError("상품명을 입력해 주세요."); return; }
+    if (!form.price) { setFormError("거래 가격을 입력해 주세요."); return; }
+    if (!form.qty) { setFormError("수량을 입력해 주세요."); return; }
+    setFormError("");
     setState((s) => ({
       ...s,
       transactions: editingId
@@ -400,7 +422,7 @@ function TransactionsView({ state, setState, exportCsv }: { state: AppState; set
   };
   const remove = (txId: string) => { if (confirm("이 투자 기록을 삭제할까요?")) setState((s) => ({ ...s, transactions: s.transactions.filter((t) => t.id !== txId) })); };
   return <section className="page-stack"><div className="page-intro"><div><h2>투자 기록</h2><p>기존 기록의 연필 버튼을 누르면 내용을 수정할 수 있습니다.</p></div><div className="action-row"><button className="secondary" onClick={exportCsv}><Icon name="download"/> CSV</button><button className="primary" onClick={startAdd}><Icon name="plus"/> 기록 추가</button></div></div>
-    {open && <form className="entry-form" onSubmit={submit}><div className="form-head"><h3>{editingId ? "투자 기록 수정" : "새 투자 기록"}</h3><button type="button" onClick={closeForm}>닫기</button></div><div className="form-grid"><label>날짜<input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })}/></label><label>유형<select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as TxType })}><option>매수</option><option>매도</option><option>배당</option></select></label><label>자산군<select value={form.asset} onChange={(e) => setForm({ ...form, asset: e.target.value })}>{state.allocations.map((a) => <option key={a.id}>{a.name}</option>)}</select></label><label>계좌<select value={form.account} onChange={(e) => setForm({ ...form, account: e.target.value })}><option>ISA</option><option>일반 증권계좌</option><option>연금저축</option><option>IRP</option><option>기타</option></select></label><label>상품명<input required placeholder="예: 미국 대표지수 ETF" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}/></label><label>티커<input placeholder="예: 123456" value={form.ticker} onChange={(e) => setForm({ ...form, ticker: e.target.value })}/></label><label>거래 가격<MoneyInput required value={form.price} onValueChange={(value) => setForm({ ...form, price: value })} ariaLabel="거래 가격"/></label><label>수량<input required type="number" min="0" step=".0001" value={form.qty || ""} onChange={(e) => setForm({ ...form, qty: safeNumber(e.target.value) })}/></label><label>현재 가격<MoneyInput value={form.currentPrice} onValueChange={(value) => setForm({ ...form, currentPrice: value })} ariaLabel="현재 가격"/></label><label className="wide">메모<input placeholder="투자 이유 또는 당시 판단" value={form.memo} onChange={(e) => setForm({ ...form, memo: e.target.value })}/></label></div><div className="form-total"><span>예상 거래금액</span><strong>{won(form.price * form.qty)}</strong><button className="primary" type="submit">{editingId ? "수정 내용 저장" : "기록 저장"}</button></div></form>}
+    {open && <form className="entry-form" onSubmit={submit} noValidate><div className="form-head"><h3>{editingId ? "투자 기록 수정" : "새 투자 기록"}</h3><button type="button" onClick={closeForm}>닫기</button></div>{formError && <div className="form-error" role="alert"><strong>입력 내용을 확인해 주세요</strong><span>{formError}</span></div>}<div className="form-grid"><label>날짜<input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })}/></label><label>유형<select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as TxType })}><option>매수</option><option>매도</option><option>배당</option></select></label><label>자산군<select value={form.asset} onChange={(e) => setForm({ ...form, asset: e.target.value })}>{state.allocations.map((a) => <option key={a.id}>{a.name}</option>)}</select></label><label>계좌<select value={form.account} onChange={(e) => setForm({ ...form, account: e.target.value })}><option>ISA</option><option>일반 증권계좌</option><option>연금저축</option><option>IRP</option><option>기타</option></select></label><label>상품명<input aria-invalid={Boolean(formError && !form.name.trim())} placeholder="예: 미국 대표지수 ETF" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}/></label><label>티커<input placeholder="예: 123456" value={form.ticker} onChange={(e) => setForm({ ...form, ticker: e.target.value })}/></label><label>거래 가격<MoneyInput value={form.price} onValueChange={(value) => setForm({ ...form, price: value })} ariaLabel="거래 가격"/></label><label>수량<input aria-invalid={Boolean(formError && !form.qty)} type="number" min="0" step=".0001" value={form.qty || ""} onChange={(e) => setForm({ ...form, qty: safeNumber(e.target.value) })}/></label><label>현재 가격<MoneyInput value={form.currentPrice} onValueChange={(value) => setForm({ ...form, currentPrice: value })} ariaLabel="현재 가격"/></label><label className="wide">메모<input placeholder="투자 이유 또는 당시 판단" value={form.memo} onChange={(e) => setForm({ ...form, memo: e.target.value })}/></label></div><div className="form-total"><span>예상 거래금액</span><strong>{won(form.price * form.qty)}</strong><button className="primary" type="submit">{editingId ? "수정 내용 저장" : "기록 저장"}</button></div></form>}
     <div className="records-mobile">{state.transactions.map((t) => <article key={t.id}><div><span className={`tx-type ${t.type}`}>{t.type}</span><small>{t.date}</small><span className="mobile-row-actions"><button onClick={() => startEdit(t)} aria-label="기록 수정"><Icon name="edit"/></button><button onClick={() => remove(t.id)} aria-label="기록 삭제"><Icon name="trash"/></button></span></div><h3>{t.name}<em>{t.ticker}</em></h3><dl><div><dt>거래금액</dt><dd>{won(t.price * t.qty)}</dd></div><div><dt>현재가치</dt><dd>{won(t.currentPrice * t.qty)}</dd></div><div><dt>수익률</dt><dd className={t.currentPrice >= t.price ? "positive" : "negative"}>{pct(t.price ? (t.currentPrice - t.price) / t.price * 100 : 0, 2)}</dd></div></dl><p>{t.account} · {t.asset}{t.memo ? ` · ${t.memo}` : ""}</p></article>)}</div>
     <div className="data-table"><table><thead><tr><th>날짜</th><th>유형</th><th>상품 / 자산군</th><th>계좌</th><th className="right">매수가 × 수량</th><th className="right">현재 평가액</th><th className="right">수익률</th><th>관리</th></tr></thead><tbody>{state.transactions.map((t) => { const rate = t.price ? (t.currentPrice - t.price) / t.price * 100 : 0; return <tr key={t.id}><td>{t.date}</td><td><span className={`tx-type ${t.type}`}>{t.type}</span></td><td><b>{t.name}</b><small>{t.ticker} · {t.asset}</small></td><td>{t.account}</td><td className="right">{won(t.price * t.qty)}<small>{won(t.price)} × {t.qty}</small></td><td className="right"><b>{won(t.currentPrice * t.qty)}</b></td><td className={`right ${rate >= 0 ? "positive" : "negative"}`}>{rate >= 0 ? "+" : ""}{pct(rate, 2)}</td><td><span className="row-actions"><button className="icon-button edit" onClick={() => startEdit(t)} aria-label="기록 수정"><Icon name="edit"/></button><button className="icon-button" onClick={() => remove(t.id)} aria-label="기록 삭제"><Icon name="trash"/></button></span></td></tr>; })}</tbody></table>{!state.transactions.length && <Empty>첫 투자 기록을 추가해 보세요.</Empty>}</div>
   </section>;
